@@ -1,0 +1,2 @@
+# Config stays allocated throughout the whole program
+leak:readConfig

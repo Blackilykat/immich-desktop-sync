@@ -20,6 +20,10 @@
 bool uploadToImmich(char* filename, char* absolutePath, long modificationDate, char* album, config* config);
 void updateTrackedDirectory(tracked_directory* trackedDirectory, config* config);
 
+bool shouldIgnoreFile(char* filename) {
+	return strcmp(filename, STATE_FILENAME) == 0 || strcmp(filename, STATE_TEMP_FILENAME) == 0;
+}
+
 int main() {
 	printf("omg hi\n");
 
@@ -40,25 +44,24 @@ int main() {
 		conf.trackedDirectories[i].wd = wd;
 	}
 
-	struct inotify_event event;
 	int maxRead = sizeof(struct inotify_event) + NAME_MAX + 1;
 
-	while(read(fd, &event, maxRead) > 0) {
-		if(event.mask & IN_IGNORED || event.mask & IN_ISDIR || event.mask & IN_Q_OVERFLOW) continue;
+	// I'm unsure on how you're expected to allocate structs with __flexarr on the stack
+	struct inotify_event* event = malloc(maxRead);
+
+	while(read(fd, event, maxRead) > 0) {
+		if(event->mask & IN_IGNORED || event->mask & IN_ISDIR || event->mask & IN_Q_OVERFLOW) continue;
+		if(shouldIgnoreFile(event->name)) continue;
 
 		for(int i = 0; i < conf.trackedDirectoriesLen; i++) {
-			if(conf.trackedDirectories[i].wd != event.wd) continue;
+			if(conf.trackedDirectories[i].wd != event->wd) continue;
 			tracked_directory* directory = &conf.trackedDirectories[i];
 
 			char fullFilename[FILENAME_MAX];
 			strcpy(fullFilename, directory->directory);
 
 			fullFilename[strlen(directory->directory)] = 0;
-			strcat(fullFilename, event.name);
-
-			// stat clears event.name!
-			char* allocatedFilename = malloc(strlen(event.name) + 1);
-			strcpy(allocatedFilename, event.name);
+			strcat(fullFilename, event->name);
 
 			struct stat attr;
 			stat(fullFilename, &attr);
@@ -72,6 +75,8 @@ int main() {
 			// TODO: check the unknown type thingy for fat32
 			if(mode != S_IFREG && mode != S_IFLNK) break;
 
+			char* allocatedFilename = malloc(strlen(event->name) + 1);
+			strcpy(allocatedFilename, event->name);
 
 			if(uploadToImmich(allocatedFilename, fullFilename, attr.st_mtim.tv_sec, directory->album, &conf)) {
 				bool found = false;
@@ -96,6 +101,8 @@ int main() {
 			break;
 		}
 	}
+	free(event);
+	curl_easy_cleanup(conf.handle);
 }
 
 void updateTrackedDirectory(tracked_directory* trackedDirectory, config* config) {
@@ -157,6 +164,8 @@ void updateTrackedDirectory(tracked_directory* trackedDirectory, config* config)
 	}
 
 	writeState(directory, trackedDirectory->state);
+
+	closedir(dir);
 }
 
 static size_t curl_write_to_newly_allocated_string(char* contents, size_t size, size_t nmemb, void* vdest) {
@@ -168,8 +177,7 @@ static size_t curl_write_to_newly_allocated_string(char* contents, size_t size, 
 
 
 bool uploadToImmich(char* filename, char* absolutePath, long modificationDate, char* album, config* config) {
-	if(strcmp(filename, STATE_FILENAME) == 0) return true;
-	if(strcmp(filename, STATE_TEMP_FILENAME) == 0) return true;
+	if(shouldIgnoreFile(filename)) return true;
 
 	curl_easy_reset(config->handle);
 
@@ -208,13 +216,13 @@ bool uploadToImmich(char* filename, char* absolutePath, long modificationDate, c
 	// Set both the creation and modification date to the file's modification date.
 	// This is because file modifications get treated as newly uploaded files by this program.
 
-	char time[25];
+	// compiler said the pattern has a theoretical limit of 77 char, i trust
+	char time[77];
 
 	// statically allocated struct
 	struct tm* time_data = gmtime(&modificationDate);
 
-	// TODO: fix warnings here
-	snprintf(time, 25, "%04d-%02d-%02dT%02d:%02d:%02d.000Z",
+	snprintf(time, 77, "%d-%02d-%02dT%02d:%02d:%02d.000Z",
 	  time_data->tm_year + 1900,
 	  time_data->tm_mon + 1,
 	  time_data->tm_mday,
@@ -248,19 +256,18 @@ bool uploadToImmich(char* filename, char* absolutePath, long modificationDate, c
 	curl_easy_getinfo(config->handle, CURLINFO_RESPONSE_CODE, &responseCode);
 
 	if(response != CURLE_OK) {
-		printf("oh fuck %s\n", curl_easy_strerror(response));
+		printf("Failed to perform asset request: %s\n", curl_easy_strerror(response));
 		if(responseBody != NULL) free(responseBody);
 		return false;
 	}
 
 	if(responseCode == 400 && strstr(responseBody, "Unsupported file type") != NULL) {
-		printf("Is it doing this?\n");
 		// Pretend it was uploaded and avoid trying again at next startup
 		return true;
 	}
 
 	if(responseCode < 200 || responseCode > 299) {
-		printf("Got bad response %ld: %s\n", responseCode, responseBody);
+		printf("Got response %ld to asset request: %s\n", responseCode, responseBody);
 		if(responseBody != NULL) free(responseBody);
 		return false;
 	}
@@ -282,10 +289,14 @@ bool uploadToImmich(char* filename, char* absolutePath, long modificationDate, c
 
 	snprintf(body, 49, "{\"ids\":[\"%s\"]}", id);
 
+	free(id);
+
 	headers = curl_slist_append(headers, "Content-Type: application/json");
 
 	free(url);
-	url = malloc(strlen(config->immichURL) + strlen("/api/albums") + 36 + strlen("/assets") + 1);
+
+	// Address sanitizer complains if I don't add another extra byte. Don't qute get why, 1 should be enough for a trailing 0.
+	url = malloc(strlen(config->immichURL) + strlen("/api/albums") + strlen(album) + strlen("/assets") + 1 + 1);
 	strcpy(url, config->immichURL);
 	strcat(url, "/api/albums/");
 	strcat(url, album);
@@ -301,13 +312,13 @@ bool uploadToImmich(char* filename, char* absolutePath, long modificationDate, c
 	curl_easy_getinfo(config->handle, CURLINFO_RESPONSE_CODE, &responseCode);
 
 	if(response != CURLE_OK) {
-		printf("oh fuck v2 %s\n", curl_easy_strerror(response));
+		printf("Failed to perform albumAsset request: %s\n", curl_easy_strerror(response));
 		if(responseBody != NULL) free(responseBody);
 		return false;
 	}
 
 	if(responseCode < 200 || responseCode > 299) {
-		printf("Got bad response %ld to second request: %s\n", responseCode, responseBody);
+		printf("Got response %ld to albumAsset request: %s\n", responseCode, responseBody);
 		if(responseBody != NULL) free(responseBody);
 		return false;
 	}

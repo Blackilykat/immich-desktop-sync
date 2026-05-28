@@ -14,7 +14,7 @@ template=true\
 \
 # An immich API key.\
 # Get one in Account Settings > API Keys > New API Key.\
-# immich-desktop-sync requires (TODO).\
+# immich-desktop-sync requires 2 permissions: asset.upload and albumAsset.create.\
 apiKey=changeMe\
 \
 # The URL base of your immich server.\
@@ -26,9 +26,10 @@ url=http://localhost\
 # On the left, the location on your filesystem.\
 # On the right, the destination album ID.\
 # Multiple directories are allowed to point to the same album.\
-~/Pictures=5e98144a-357d-4289-af57-f4fe0a2063ca\
 \
-/example=dddfbedb-aeca-4c6d-8336-ece5471bcce6\
+# ~/Pictures=5e98144a-357d-4289-af57-f4fe0a2063ca\
+\
+# /tmp/example=dddfbedb-aeca-4c6d-8336-ece5471bcce6\
 "
 
 void configError(int lineNumber, char* message) {

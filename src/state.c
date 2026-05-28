@@ -84,7 +84,7 @@ void writeState(char* directory, directory_state state) {
 			return;
 		}
 
-		int filenameBytes = strlen(trackedFile.filename) + 1;
+		unsigned long filenameBytes = strlen(trackedFile.filename) + 1;
 		if(fwrite(trackedFile.filename, 1, filenameBytes, file) < filenameBytes) {
 			fprintf(stderr, "Failed to write filename in state file: %s\n", filename);
 			fclose(file);
@@ -105,5 +105,6 @@ void writeState(char* directory, directory_state state) {
 	rename(filename, finalFilename);
 
 	free(filename);
+	free(finalFilename);
 }
 
