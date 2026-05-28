@@ -10,7 +10,9 @@ Linux only. No plans to support other OSes, but it should be relatively simple t
 
 ## Running
 
-Run the executable. It does not accept any arguments. It will create a config template at `~/.config/immich-desktop-sync.conf`.
+Run the executable. It does not accept any arguments.
+
+It will create a config template at `~/.config/immich-desktop-sync.conf` for you to fill in.
 
 ## Config
 
@@ -40,13 +42,17 @@ url=http://localhost
 # /tmp/example=dddfbedb-aeca-4c6d-8336-ece5471bcce6
 ```
 
-## Libraries
-
-libcurl to perform HTTP requests.
-
 ## Building
 
 You'll need make, gcc and libcurl.
 
 Run `make release`, if your machine isn't missing stuff you'll find a `./build/immich-desktop-sync`.
+
+## Systemd
+
+The `immich-desktop-sync.service` file should be placed in `/usr/lib/systemd/user/`. It should **not** be run as root.
+
+The service file expects the `immich-desktop-sync` binary to be in PATH.
+
+Users can then enable the service by running `systemctl --user --now enable immich-desktop-sync`.
 
