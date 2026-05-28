@@ -166,8 +166,14 @@ config readConfig() {
 		if(key[0] == '/') {
 			checkCorrectAlbumId(lineCount, value);
 
-			char* allocatedKey = malloc(strlen(key) + 1);
+			bool shouldAddTrailingSlash = key[strlen(key) - 1] != '/';
+			char* allocatedKey = malloc(strlen(key) + 1 + (shouldAddTrailingSlash ? 1 : 0));
 			strcpy(allocatedKey, key);
+
+			if(shouldAddTrailingSlash) {
+				strcat(allocatedKey, "/");
+			}
+
 			char* allocatedValue = malloc(strlen(value) + 1);
 			strcpy(allocatedValue, value);
 

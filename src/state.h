@@ -1,5 +1,8 @@
 #pragma once
 
+#define STATE_FILENAME ".immich-desktop-sync-state"
+#define STATE_TEMP_FILENAME ".immich-desktop-sync-state.tmp"
+
 typedef struct {
 	long time;
 	char* filename;

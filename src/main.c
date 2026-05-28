@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/inotify.h>
 #include <stdbool.h>
 #include <time.h>
 #include <unistd.h>
@@ -24,19 +25,76 @@ int main() {
 
 	config conf = readConfig();
 
-	// TODO: maybe dont print api key lol
-	printf("Got config with api key %s and url %s.\n", conf.apiKey, conf.immichURL);
-
 	curl_global_init(CURL_GLOBAL_ALL);
 
 	conf.handle = curl_easy_init();
 
+	int fd = inotify_init();
 	for(int i = 0; i < conf.trackedDirectoriesLen; i++) {
-		printf("%s -> %s\n", conf.trackedDirectories[i].directory, conf.trackedDirectories[i].album);
-
 		conf.trackedDirectories[i].state = readState(conf.trackedDirectories[i].directory);
 
 		updateTrackedDirectory(&conf.trackedDirectories[i], &conf);
+
+		int wd = inotify_add_watch(fd, conf.trackedDirectories[i].directory, IN_CLOSE_WRITE | IN_MOVED_TO);
+
+		conf.trackedDirectories[i].wd = wd;
+	}
+
+	struct inotify_event event;
+	int maxRead = sizeof(struct inotify_event) + NAME_MAX + 1;
+
+	while(read(fd, &event, maxRead) > 0) {
+		if(event.mask & IN_IGNORED || event.mask & IN_ISDIR || event.mask & IN_Q_OVERFLOW) continue;
+
+		for(int i = 0; i < conf.trackedDirectoriesLen; i++) {
+			if(conf.trackedDirectories[i].wd != event.wd) continue;
+			tracked_directory* directory = &conf.trackedDirectories[i];
+
+			char fullFilename[FILENAME_MAX];
+			strcpy(fullFilename, directory->directory);
+
+			fullFilename[strlen(directory->directory)] = 0;
+			strcat(fullFilename, event.name);
+
+			// stat clears event.name!
+			char* allocatedFilename = malloc(strlen(event.name) + 1);
+			strcpy(allocatedFilename, event.name);
+
+			struct stat attr;
+			stat(fullFilename, &attr);
+
+			if(attr.st_size == 0) {
+				// may not be written yet, wait for further updates
+				break;
+			}
+
+			unsigned int mode = attr.st_mode & S_IFMT;
+			// TODO: check the unknown type thingy for fat32
+			if(mode != S_IFREG && mode != S_IFLNK) break;
+
+
+			if(uploadToImmich(allocatedFilename, fullFilename, attr.st_mtim.tv_sec, directory->album, &conf)) {
+				bool found = false;
+				for(int j = 0; j < directory->state.count; j++) {
+					if(strcmp(directory->state.data[j].filename, allocatedFilename) == 0) {
+						directory->state.data[j].time = attr.st_mtim.tv_sec;
+						found = true;
+						break;
+					}
+				}
+				if(!found) {
+					directory->state.count++;
+					directory->state.data = realloc(directory->state.data, sizeof(tracked_file) * directory->state.count);
+					directory->state.data[directory->state.count - 1] = (tracked_file) {
+						.filename = allocatedFilename,
+						.time = attr.st_mtim.tv_sec 
+					};
+				}
+
+				writeState(directory->directory, directory->state);
+			}
+			break;
+		}
 	}
 }
 
@@ -82,12 +140,16 @@ void updateTrackedDirectory(tracked_directory* trackedDirectory, config* config)
 		}
 
 		if(!found) {
+
+			char* allocatedFilename = malloc(strlen(entry->d_name) + 1);
+			strcpy(allocatedFilename, entry->d_name);
+
 			// File was added, upload it to immich
 			if(uploadToImmich(entry->d_name, fullFilename, modificationDate, trackedDirectory->album, config)) {
 				trackedDirectory->state.count++;
 				trackedDirectory->state.data = realloc(trackedDirectory->state.data, sizeof(tracked_file) * trackedDirectory->state.count);
 				trackedDirectory->state.data[trackedDirectory->state.count - 1] = (tracked_file) {
-					.filename = entry->d_name,
+					.filename = allocatedFilename,
 					.time = modificationDate
 				};
 			}
@@ -106,6 +168,9 @@ static size_t curl_write_to_newly_allocated_string(char* contents, size_t size, 
 
 
 bool uploadToImmich(char* filename, char* absolutePath, long modificationDate, char* album, config* config) {
+	if(strcmp(filename, STATE_FILENAME) == 0) return true;
+	if(strcmp(filename, STATE_TEMP_FILENAME) == 0) return true;
+
 	curl_easy_reset(config->handle);
 
 	printf("Uploading file %s to album %s...\n", absolutePath, album);
@@ -151,7 +216,7 @@ bool uploadToImmich(char* filename, char* absolutePath, long modificationDate, c
 	// TODO: fix warnings here
 	snprintf(time, 25, "%04d-%02d-%02dT%02d:%02d:%02d.000Z",
 	  time_data->tm_year + 1900,
-	  time_data->tm_mon,
+	  time_data->tm_mon + 1,
 	  time_data->tm_mday,
 	  time_data->tm_hour,
 	  time_data->tm_min,
@@ -188,7 +253,14 @@ bool uploadToImmich(char* filename, char* absolutePath, long modificationDate, c
 		return false;
 	}
 
+	if(responseCode == 400 && strstr(responseBody, "Unsupported file type") != NULL) {
+		printf("Is it doing this?\n");
+		// Pretend it was uploaded and avoid trying again at next startup
+		return true;
+	}
+
 	if(responseCode < 200 || responseCode > 299) {
+		printf("Got bad response %ld: %s\n", responseCode, responseBody);
 		if(responseBody != NULL) free(responseBody);
 		return false;
 	}
@@ -235,6 +307,7 @@ bool uploadToImmich(char* filename, char* absolutePath, long modificationDate, c
 	}
 
 	if(responseCode < 200 || responseCode > 299) {
+		printf("Got bad response %ld to second request: %s\n", responseCode, responseBody);
 		if(responseBody != NULL) free(responseBody);
 		return false;
 	}

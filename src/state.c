@@ -9,13 +9,7 @@ For each tracked directory, the program stores a file called `.immich-desktop-sy
 Storage is structured as a sequence of files. A file is composed as follows:
 - 8 bytes for the modification date
 - A null-terminated string containing the filename.
-
-NON RECURSIVE
 */
-
-#define STATE_FILENAME ".immich-desktop-sync-state"
-#define STATE_TEMP_FILENAME ".immich-desktop-sync-state.tmp"
-
 
 directory_state readState(char* directory) {
 	directory_state state = {};

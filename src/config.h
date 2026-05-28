@@ -6,6 +6,7 @@ typedef struct tracked_directory {
 	char* directory;
 	char* album;
 	directory_state state;
+	int wd; // watch descriptor
 } tracked_directory;
 
 typedef struct config {
