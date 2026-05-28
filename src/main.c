@@ -73,8 +73,9 @@ void updateTrackedDirectory(tracked_directory* trackedDirectory, config* config)
 
 			if(modificationDate != trackedFile->time) {
 				// file was updated, reupload it to Immich
-				uploadToImmich(entry->d_name, fullFilename, modificationDate, trackedDirectory->album, config);
-				trackedFile->time = modificationDate;
+				if(uploadToImmich(entry->d_name, fullFilename, modificationDate, trackedDirectory->album, config)) {
+					trackedFile->time = modificationDate;
+				}
 			}
 
 			break;
@@ -82,14 +83,14 @@ void updateTrackedDirectory(tracked_directory* trackedDirectory, config* config)
 
 		if(!found) {
 			// File was added, upload it to immich
-			uploadToImmich(entry->d_name, fullFilename, modificationDate, trackedDirectory->album, config);
-
-			trackedDirectory->state.count++;
-			trackedDirectory->state.data = realloc(trackedDirectory->state.data, sizeof(tracked_file) * trackedDirectory->state.count);
-			trackedDirectory->state.data[trackedDirectory->state.count - 1] = (tracked_file) {
-				.filename = entry->d_name,
-				.time = modificationDate
-			};
+			if(uploadToImmich(entry->d_name, fullFilename, modificationDate, trackedDirectory->album, config)) {
+				trackedDirectory->state.count++;
+				trackedDirectory->state.data = realloc(trackedDirectory->state.data, sizeof(tracked_file) * trackedDirectory->state.count);
+				trackedDirectory->state.data[trackedDirectory->state.count - 1] = (tracked_file) {
+					.filename = entry->d_name,
+					.time = modificationDate
+				};
+			}
 		}
 	}
 
@@ -97,9 +98,8 @@ void updateTrackedDirectory(tracked_directory* trackedDirectory, config* config)
 }
 
 static size_t curl_write_to_newly_allocated_string(char* contents, size_t size, size_t nmemb, void* vdest) {
-	size_t realSize = strlen(contents);
 	char** dest = (char**) vdest;
-	*dest = malloc(realSize + 1);
+	*dest = malloc(strlen(contents) + 1);
 	strcpy(*dest, contents);
 	return size * nmemb;
 }
@@ -142,7 +142,6 @@ bool uploadToImmich(char* filename, char* absolutePath, long modificationDate, c
 
 	// Set both the creation and modification date to the file's modification date.
 	// This is because file modifications get treated as newly uploaded files by this program.
-	// TODO: maybe change approach if Immich marks it as duplicate based on filename
 
 	char time[25];
 
