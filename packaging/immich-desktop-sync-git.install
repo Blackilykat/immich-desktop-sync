@@ -1,0 +1,16 @@
+# Install messages for the PKGBUILD
+
+post_install() {
+	echo "Immich desktop sync was installed, you can create a config template by running it once (NOT as root):"
+	echo
+	echo ' $ immich-desktop-sync'
+	echo
+	echo "Once you've tuned your config and verified it works as you expect, you may enable the service to keep it always running in the background (NOT as root):"
+	echo
+	echo ' $ systemctl --user --now enable immich-desktop-sync'
+	echo
+}
+
+post_remove() {
+	echo "Immich desktop sync has been removed. Its config and state files were kept. You may want to remove ~/.config/immich-desktop-sync.conf and .immich-desktop-sync-state files under tracked directories."
+}
